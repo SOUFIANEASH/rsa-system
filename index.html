@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RSA Encryption and Decryption System (Level B)</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 880px; margin: 24px auto; padding: 0 16px; color: #222; }
+  h1 { font-size: 1.5rem; } h2 { font-size: 1.1rem; margin: 0 0 10px; }
+  section { border: 1px solid #ccd; border-radius: 8px; padding: 14px 16px; margin: 16px 0; background: #fafbff; }
+  label { display: block; font-size: .85rem; margin: 8px 0 3px; color: #445; }
+  input[type=text], input[type=number], textarea { width: 100%; box-sizing: border-box; padding: 7px; font: inherit; border: 1px solid #aab; border-radius: 5px; }
+  textarea { min-height: 70px; font-family: ui-monospace, monospace; font-size: .85rem; }
+  .row { display: flex; gap: 12px; } .row > div { flex: 1; }
+  button { margin: 10px 8px 0 0; padding: 7px 14px; border: 0; border-radius: 5px; background: #2b4acb; color: #fff; font: inherit; cursor: pointer; }
+  button.alt { background: #556; }
+  pre { background: #eef; padding: 10px; border-radius: 5px; white-space: pre-wrap; word-break: break-all; font-size: .85rem; }
+  .err { color: #b00020; font-weight: 600; } .ok { color: #0a6b2d; }
+</style>
+</head>
+<body>
+<h1>RSA Encryption and Decryption System <small>(Level B – no crypto library)</small></h1>
+
+<section>
+  <h2>1. Initial data and key generation</h2>
+  <div class="row">
+    <div><label for="p">Prime p</label><input id="p" type="number" value="1009"></div>
+    <div><label for="q">Prime q</label><input id="q" type="number" value="1013"></div>
+    <div><label for="e">Public exponent e (optional)</label><input id="e" type="number" placeholder="auto"></div>
+  </div>
+  <label for="x">Initial text x</label>
+  <textarea id="x">Hello, RSA!</textarea>
+  <button id="btnKeys">Calculate n, Φ, e, d</button>
+  <pre id="params">—</pre>
+</section>
+
+<section>
+  <h2>2. Encryption and storage</h2>
+  <button id="btnEnc">Encrypt text</button>
+  <button id="btnSave" class="alt">Save file (n, e + ciphertext)</button>
+  <label>Encrypted text (one number per character)</label>
+  <pre id="cipherOut">—</pre>
+</section>
+
+<section>
+  <h2>3. Reading and decryption</h2>
+  <label for="file">Open saved file</label>
+  <input id="file" type="file" accept=".txt">
+  <label>File content</label>
+  <textarea id="fileContent" readonly></textarea>
+  <button id="btnDec">Decrypt (find p, q from n → Φ → d)</button>
+  <pre id="attack">—</pre>
+  <label>Decrypted text</label>
+  <pre id="plainOut">—</pre>
+</section>
+
+<div id="msg"></div>
+<script src="rsa.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+let keys = null, cipher = null;
+
+function fail(err) { $("msg").innerHTML = `<p class="err">Error: ${String(err.message || err).replace(/</g, "&lt;")}</p>`; }
+function clear() { $("msg").innerHTML = ""; }
+function big(id) {
+  const v = $(id).value.trim();
+  if (!/^\d+$/.test(v)) throw new Error(`Field "${id}" must be a positive integer`);
+  return BigInt(v);
+}
+
+function calcKeys() {
+  keys = RSA.generateKeys(big("p"), big("q"), $("e").value.trim() ? big("e") : undefined);
+  const k = keys;
+  $("params").textContent =
+`n = p·q = ${k.p} · ${k.q} = ${k.n}
+Φ = (p−1)(q−1) = ${k.p - 1n} · ${k.q - 1n} = ${k.phi}
+e = ${k.e}   (gcd(e, Φ) = ${RSA.gcd(k.e, k.phi)})
+d = e⁻¹ mod Φ = ${k.d}   (extended Euclid; check e·d mod Φ = ${(k.e * k.d) % k.phi})
+Public key  (n, e) = (${k.n}, ${k.e})
+Private key (n, d) = (${k.n}, ${k.d})`;
+}
+
+$("btnKeys").onclick = () => { try { clear(); calcKeys(); } catch (e) { fail(e); } };
+
+$("btnEnc").onclick = () => {
+  try {
+    clear(); calcKeys();
+    cipher = RSA.encrypt($("x").value, keys.n, keys.e);
+    $("cipherOut").textContent = cipher.join(" ");
+  } catch (e) { fail(e); }
+};
+
+$("btnSave").onclick = () => {
+  try {
+    clear();
+    if (!keys || !cipher) throw new Error("Encrypt a text first");
+    const blob = new Blob([RSA.serialize(keys.n, keys.e, cipher)], { type: "text/plain" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = "rsa_encrypted.txt"; a.click();
+    URL.revokeObjectURL(a.href);
+  } catch (e) { fail(e); }
+};
+
+$("file").onchange = async (ev) => {
+  const f = ev.target.files[0];
+  if (f) $("fileContent").value = await f.text();
+};
+
+$("btnDec").onclick = () => {
+  try {
+    clear();
+    const { n, e, cipher: c } = RSA.parse($("fileContent").value);
+    const t0 = performance.now();
+    const a = RSA.breakPublicKey(n, e);
+    const ms = (performance.now() - t0).toFixed(1);
+    $("attack").textContent =
+`Read from file: n = ${n}, e = ${e}
+Attack (trial division, ${ms} ms): p = ${a.p}, q = ${a.q}
+Φ = (p−1)(q−1) = ${a.phi}
+d = e⁻¹ mod Φ = ${a.d}`;
+    $("plainOut").textContent = RSA.decrypt(c, n, a.d);
+  } catch (e) { fail(e); }
+};
+</script>
+</body>
+</html>
